@@ -1,0 +1,14 @@
+xhost +local:root
+
+sudo docker run -it --rm \
+  --ipc=host \
+  --shm-size=2g \
+  --device /dev/dri:/dev/dri \
+  --env DISPLAY="$DISPLAY" \
+  --env MESA_GL_THREAD=true \
+  --volume /tmp/.X11-unix:/tmp/.X11-unix:rw \
+  --volume "/home/tigran/PycharmProjects/dronekit_examples:/home/tigran/PycharmProjects/dronekit_examples" \
+  --name dk \
+  dronekit-gazebo-sitl
+
+~/start_sitl.sh

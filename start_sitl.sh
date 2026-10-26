@@ -17,7 +17,7 @@ for arg in "$@"; do
 done
 
 ARDUCOPTER_DIR=/home/ardupilot/ardupilot/ArduCopter
-OUT_PORTS="--out udp:127.0.0.1:14550 --out udp:127.0.0.1:14450"
+OUT_PORTS="--out udp:172.17.0.1:14551 --out udp:172.17.0.1:14450"
 
 # ArduPilot SITL + its own MAVProxy, extra output on :14450 for the dronekit examples.
 # Runs in the foreground - Ctrl-C stops the whole stack. Run this in one terminal,

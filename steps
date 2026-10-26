@@ -11,4 +11,4 @@ sudo docker run -it --rm \
   --name dk \
   dronekit-gazebo-sitl
 
-~/start_sitl.sh
+bash /home/tigran/PycharmProjects/dronekit_examples/start_sitl.sh

@@ -92,7 +92,6 @@ class MAVLinkController:
                     & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
                 )
 
-                # Applications can poll get_vehicle_state() for these values.
                 self.current_mode = mode
                 self.is_armed = armed
 
@@ -168,6 +167,47 @@ class MAVLinkController:
 
         except Exception as exc:
             callback(False, f"Arming failed: {exc}")
+
+    def takeoff(self, altitude, callback):
+        with self._lock:
+            vehicle = self.vehicle
+
+        if not self.connected or vehicle is None:
+            callback(False, "Not connected")
+            return
+
+        Thread(
+            target=self._takeoff_worker,
+            args=(vehicle, altitude, callback),
+            daemon=True,
+        ).start()
+
+    def _takeoff_worker(self, vehicle, altitude, callback):
+        try:
+            if not vehicle.motors_armed():
+                raise RuntimeError("Vehicle must be armed before takeoff")
+
+            if getattr(self, "current_mode", "UNKNOWN") != "GUIDED":
+                raise RuntimeError("Vehicle must be in GUIDED mode")
+
+            vehicle.mav.command_long_send(
+                vehicle.target_system,
+                vehicle.target_component,
+                mavutil.mavlink.MAV_CMD_NAV_TAKEOFF,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                float(altitude)
+            )
+
+            callback(True, f"Takeoff command sent: {altitude} meters")
+
+        except Exception as exc:
+            callback(False, f"Takeoff failed: {exc}")
 
     def get_vehicle_state(self):
         return {

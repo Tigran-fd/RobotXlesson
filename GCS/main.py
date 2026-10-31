@@ -9,7 +9,7 @@ class ArduPilotGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("ArduPilot Ground Control")
-        self.root.geometry("820x720")
+        self.root.geometry("1420x890")
         self.root.resizable(False, False)
 
         self.controller = MAVLinkController()
@@ -20,6 +20,7 @@ class ArduPilotGUI:
         self.status_text = tk.StringVar(value="Disconnected")
         self.mode_text = tk.StringVar(value="Unknown")
         self.armed_text = tk.StringVar(value="Disarmed")
+        self.takeoff_altitude = tk.StringVar(value="10")
 
         self._build_ui()
         self._set_controls_enabled(False)
@@ -187,6 +188,35 @@ class ArduPilotGUI:
         )
         self.arm_button.pack(fill="x")
 
+        # Takeoff control
+        takeoff_frame = ttk.LabelFrame(
+            main_frame,
+            text="Takeoff",
+            padding=10,
+        )
+        takeoff_frame.pack(fill="x", pady=(0, 10))
+
+        ttk.Label(
+            takeoff_frame,
+            text="Altitude (meters):",
+        ).grid(row=0, column=0, sticky="w", padx=(0, 10))
+
+        self.altitude_entry = ttk.Entry(
+            takeoff_frame,
+            textvariable=self.takeoff_altitude,
+            width=15,
+        )
+        self.altitude_entry.grid(row=0, column=1, padx=5)
+
+        self.takeoff_button = ttk.Button(
+            takeoff_frame,
+            text="Takeoff",
+            command=self.takeoff,
+        )
+        self.takeoff_button.grid(row=0, column=2, padx=10)
+
+        takeoff_frame.columnconfigure(3, weight=1)
+
         # Activity logs
         logs_frame = ttk.LabelFrame(
             main_frame,
@@ -259,6 +289,8 @@ class ArduPilotGUI:
         self.connect_button.configure(
             state="disabled" if enabled else "normal"
         )
+        self.takeoff_button.configure(state=state)
+        self.altitude_entry.configure(state=state)
 
     def connect(self):
         address = self.connection_string.get().strip()
@@ -310,6 +342,13 @@ class ArduPilotGUI:
             ),
         )
 
+    def _handle_command_result(self, success, message):
+        if success:
+            self.log(message)
+        else:
+            self.log(f"Command failed: {message}")
+            messagebox.showwarning("Command Result", message)
+
     def arm(self):
         self.arm_button.configure(state="disabled")
         self.log("Arming vehicle...")
@@ -321,13 +360,6 @@ class ArduPilotGUI:
             )
         )
 
-    def _handle_command_result(self, success, message):
-        if success:
-            self.log(message)
-        else:
-            self.log(f"Command failed: {message}")
-            messagebox.showwarning("Command Result", message)
-
     def _handle_arm_result(self, success, message):
         self.arm_button.configure(
             state="normal" if self.controller.connected else "disabled"
@@ -338,6 +370,40 @@ class ArduPilotGUI:
         else:
             self.log(f"Arming failed: {message}")
             messagebox.showwarning("Arming Result", message)
+
+
+    def takeoff(self):
+        try:
+            altitude = float(self.takeoff_altitude.get())
+
+            if altitude <= 0:
+                raise ValueError("Altitude must be greater than zero.")
+
+        except ValueError as exc:
+            messagebox.showerror("Invalid Altitude", str(exc))
+            return
+
+        self.takeoff_button.configure(state="disabled")
+        self.log(f"Requesting takeoff to {altitude} meters...")
+
+        self.controller.takeoff(
+            altitude,
+            lambda success, message: self.root.after(
+                0,
+                lambda: self._handle_takeoff_result(success, message),
+            ),
+        )
+
+    def _handle_takeoff_result(self, success, message):
+        self.takeoff_button.configure(
+            state="normal" if self.controller.connected else "disabled"
+        )
+
+        if success:
+            self.log(message)
+        else:
+            self.log(f"Takeoff failed: {message}")
+            messagebox.showwarning("Takeoff Result", message)
 
     def disconnect(self):
         self.controller.disconnect()

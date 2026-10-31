@@ -1,4 +1,4 @@
-from threading import Thread, Event
+from threading import Thread, Event, Lock, current_thread
 from pymavlink import mavutil
 import time
 
@@ -11,6 +11,11 @@ class MAVLinkController:
         "RTL",
     }
 
+    RC_MIN = 1000
+    RC_MAX = 2000
+    RC_CENTER = 1500
+    RC_SEND_RATE = 20
+
     def __init__(self):
         self.vehicle = None
         self.connected = False
@@ -18,7 +23,23 @@ class MAVLinkController:
 
         self._stop_event = Event()
         self._monitor_thread = None
-        self._lock = __import__("threading").Lock()
+        self._lock = Lock()
+
+        self.current_mode = "UNKNOWN"
+        self.is_armed = False
+
+        self.rc_channels = {
+            "roll": self.RC_CENTER,
+            "pitch": self.RC_CENTER,
+            "throttle": self.RC_MIN,
+            "yaw": self.RC_CENTER,
+        }
+
+        self._rc_thread = None
+        self._rc_stop_event = Event()
+        self._rc_lock = Lock()
+        self._mav_send_lock = Lock()
+        self.rc_control_enabled = False
 
     def connect(self, connection_string, callback):
         if self.connecting or self.connected:
@@ -209,6 +230,126 @@ class MAVLinkController:
         except Exception as exc:
             callback(False, f"Takeoff failed: {exc}")
 
+    def start_rc_control(self):
+        with self._lock:
+            if not self.connected or self.vehicle is None:
+                raise ConnectionError("Vehicle is not connected")
+
+            if self.current_mode != "STABILIZE":
+                raise RuntimeError(
+                    "RC control is available only in STABILIZE mode"
+                )
+
+            if self.rc_control_enabled:
+                return
+
+            self._rc_stop_event.clear()
+            self.rc_control_enabled = True
+
+            self._rc_thread = Thread(
+                target=self._rc_worker,
+                daemon=True
+            )
+            self._rc_thread.start()
+
+    def update_rc_channels(self, roll, pitch, throttle, yaw):
+        if not self.rc_control_enabled:
+            return
+
+        values = {
+            "roll": roll,
+            "pitch": pitch,
+            "throttle": throttle,
+            "yaw": yaw,
+        }
+
+        for channel, value in values.items():
+            if not self.RC_MIN <= value <= self.RC_MAX:
+                raise ValueError(f"Invalid PWM value for {channel}: {value}")
+
+        with self._rc_lock:
+            self.rc_channels.update(values)
+
+    def _rc_worker(self):
+        interval = 1.0 / self.RC_SEND_RATE
+
+        try:
+            while not self._rc_stop_event.is_set():
+
+                with self._lock:
+                    if not self.connected or self.vehicle is None:
+                        break
+
+                    if self.current_mode != "STABILIZE":
+                        break
+
+                    vehicle = self.vehicle
+
+                with self._rc_lock:
+                    channels = self.rc_channels.copy()
+
+                try:
+                    with self._mav_send_lock:
+                        vehicle.mav.rc_channels_override_send(
+                            vehicle.target_system,
+                            vehicle.target_component,
+                            channels["roll"],
+                            channels["pitch"],
+                            channels["throttle"],
+                            channels["yaw"],
+                            65535,
+                            65535,
+                            65535,
+                            65535,
+                        )
+
+                except Exception:
+                    break
+
+                self._rc_stop_event.wait(interval)
+
+        finally:
+            self.stop_rc_control()
+
+    def stop_rc_control(self):
+        self._rc_stop_event.set()
+
+        if self._rc_thread and self._rc_thread is not current_thread():
+            self._rc_thread.join(timeout=1)
+            self._rc_thread.join(timeout=1)
+
+        with self._lock:
+            vehicle = self.vehicle
+
+        if vehicle is not None and self.connected:
+            try:
+                with self._mav_send_lock:
+                    vehicle.mav.rc_channels_override_send(
+                        vehicle.target_system,
+                        vehicle.target_component,
+                        0,
+                        0,
+                        0,
+                        0,
+                        65535,
+                        65535,
+                        65535,
+                        65535,
+                    )
+            except Exception:
+                pass
+
+        self.rc_control_enabled = False
+        self._rc_thread = None
+
+        with self._rc_lock:
+            self.rc_channels = {
+                "roll": self.RC_CENTER,
+                "pitch": self.RC_CENTER,
+                "throttle": self.RC_MIN,
+                "yaw": self.RC_CENTER,
+            }
+
     def get_vehicle_state(self):
         return {
             "connected": self.connected,
@@ -217,6 +358,7 @@ class MAVLinkController:
         }
 
     def disconnect(self):
+        self.stop_rc_control()
         self._stop_event.set()
 
         with self._lock:

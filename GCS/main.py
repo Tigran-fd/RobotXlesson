@@ -6,10 +6,16 @@ from mavlink_controller import MAVLinkController
 
 
 class ArduPilotGUI:
+    RC_MIN = 1000
+    RC_MAX = 2000
+    RC_CENTER = 1500
+    RC_STEP = 10
+    RC_UPDATE_INTERVAL = 50  # milliseconds
+
     def __init__(self, root):
         self.root = root
         self.root.title("ArduPilot Ground Control")
-        self.root.geometry("1420x890")
+        self.root.geometry("1820x1000")
         self.root.resizable(False, False)
 
         self.controller = MAVLinkController()
@@ -22,13 +28,47 @@ class ArduPilotGUI:
         self.armed_text = tk.StringVar(value="Disarmed")
         self.takeoff_altitude = tk.StringVar(value="10")
 
+        self.root.bind("<FocusOut>", self._on_focus_out)
+        self.rc_active = False
+        self.pressed_keys = set()
+        self.rc_update_job = None
+
+        self.rc_values = {
+            "roll": self.RC_CENTER,
+            "pitch": self.RC_CENTER,
+            "throttle": self.RC_MIN,
+            "yaw": self.RC_CENTER,
+        }
+
+        self.rc_vars = {
+            name: tk.DoubleVar(value=value)
+            for name, value in self.rc_values.items()
+        }
+
+        self.rc_value_labels = {}
+
         self._build_ui()
         self._set_controls_enabled(False)
+
+        self.root.bind_all("<KeyPress>", self._on_key_press)
+        self.root.bind_all("<KeyRelease>", self._on_key_release)
 
         self.root.protocol("WM_DELETE_WINDOW", self.close_application)
 
         self.log("Application started.")
         self._update_vehicle_state()
+
+    def _on_focus_out(self, event):
+        if not self.rc_active:
+            return
+
+        self.pressed_keys.clear()
+
+        self.rc_values["roll"] = self.RC_CENTER
+        self.rc_values["pitch"] = self.RC_CENTER
+        self.rc_values["yaw"] = self.RC_CENTER
+
+        self._update_rc_display()
 
     def _build_ui(self):
         main_frame = ttk.Frame(self.root, padding=15)
@@ -83,7 +123,7 @@ class ArduPilotGUI:
 
         connection_frame.columnconfigure(0, weight=1)
 
-        # Connection status only
+        # Connection status
         connection_status_frame = ttk.LabelFrame(
             main_frame,
             text="Connection Status",
@@ -217,6 +257,98 @@ class ArduPilotGUI:
 
         takeoff_frame.columnconfigure(3, weight=1)
 
+        # RC Control
+        rc_frame = ttk.LabelFrame(
+            main_frame,
+            text="RC Control",
+            padding=10,
+        )
+        rc_frame.pack(fill="x", pady=(0, 10))
+
+        rc_channels = [
+            ("Roll", "roll"),
+            ("Pitch", "pitch"),
+            ("Throttle", "throttle"),
+            ("Yaw", "yaw"),
+        ]
+
+        self.rc_scales = {}
+
+        for index, (label, channel) in enumerate(rc_channels):
+            row = index // 2
+            column = (index % 2) * 2
+
+            ttk.Label(
+                rc_frame,
+                text=f"{label}:",
+                width=10,
+            ).grid(
+                row=row,
+                column=column,
+                sticky="w",
+                padx=5,
+                pady=5,
+            )
+
+            scale = ttk.Scale(
+                rc_frame,
+                from_=self.RC_MIN,
+                to=self.RC_MAX,
+                orient="horizontal",
+                variable=self.rc_vars[channel],
+                state="disabled",
+            )
+            scale.grid(
+                row=row,
+                column=column + 1,
+                sticky="ew",
+                padx=5,
+                pady=5,
+            )
+
+            self.rc_scales[channel] = scale
+
+            value_label = ttk.Label(
+                rc_frame,
+                text=str(self.rc_values[channel]),
+                width=6,
+            )
+            value_label.grid(
+                row=row,
+                column=column + 2,
+                padx=5,
+            )
+
+            self.rc_value_labels[channel] = value_label
+
+        rc_frame.columnconfigure(1, weight=1)
+        rc_frame.columnconfigure(3, weight=1)
+
+        self.rc_button = ttk.Button(
+            rc_frame,
+            text="Enable RC Control",
+            command=self.toggle_rc_control,
+            state="disabled",
+        )
+        self.rc_button.grid(
+            row=2,
+            column=0,
+            columnspan=5,
+            sticky="ew",
+            padx=5,
+            pady=(10, 5),
+        )
+
+        ttk.Label(
+            rc_frame,
+            text="W/S: Throttle | A/D: Yaw | Left/Right: Roll | Up/Down: Pitch",
+        ).grid(
+            row=3,
+            column=0,
+            columnspan=5,
+            pady=5,
+        )
+
         # Activity logs
         logs_frame = ttk.LabelFrame(
             main_frame,
@@ -289,8 +421,13 @@ class ArduPilotGUI:
         self.connect_button.configure(
             state="disabled" if enabled else "normal"
         )
+
         self.takeoff_button.configure(state=state)
         self.altitude_entry.configure(state=state)
+
+        self.rc_button.configure(
+            state="normal" if enabled and not self.rc_active else "disabled"
+        )
 
     def connect(self):
         address = self.connection_string.get().strip()
@@ -371,7 +508,6 @@ class ArduPilotGUI:
             self.log(f"Arming failed: {message}")
             messagebox.showwarning("Arming Result", message)
 
-
     def takeoff(self):
         try:
             altitude = float(self.takeoff_altitude.get())
@@ -405,7 +541,187 @@ class ArduPilotGUI:
             self.log(f"Takeoff failed: {message}")
             messagebox.showwarning("Takeoff Result", message)
 
+    # RC Control methods
+
+    def toggle_rc_control(self):
+        if self.rc_active:
+            self._stop_rc_control()
+        else:
+            self._start_rc_control()
+
+    def _start_rc_control(self):
+        state = self.controller.get_vehicle_state()
+
+        if not state["connected"]:
+            messagebox.showwarning(
+                "RC Control",
+                "Vehicle is not connected."
+            )
+            return
+
+        if state["mode"] != "STABILIZE":
+            messagebox.showwarning(
+                "RC Control",
+                "RC control is available only in STABILIZE mode."
+            )
+            return
+
+        try:
+            self.controller.start_rc_control()
+
+        except Exception as exc:
+            messagebox.showerror("RC Control Error", str(exc))
+            return
+
+        self.rc_active = True
+        self.rc_button.configure(text="Disable RC Control")
+        self.log("RC Control enabled.")
+
+        self._schedule_rc_update()
+
+    def _stop_rc_control(self):
+        self.rc_active = False
+        self.pressed_keys.clear()
+
+        if self.rc_update_job is not None:
+            self.root.after_cancel(self.rc_update_job)
+            self.rc_update_job = None
+
+        self.controller.stop_rc_control()
+
+        self.rc_values = {
+            "roll": self.RC_CENTER,
+            "pitch": self.RC_CENTER,
+            "throttle": self.RC_MIN,
+            "yaw": self.RC_CENTER,
+        }
+
+        self._update_rc_display()
+
+        self.rc_button.configure(
+            text="Enable RC Control",
+            state="normal" if self.controller.connected else "disabled",
+        )
+
+        self.log("RC Control disabled.")
+
+    def _on_key_press(self, event):
+        if not self.rc_active:
+            return
+
+        # Do not capture keys when the user is typing in an input field.
+        focused_widget = self.root.focus_get()
+
+        if isinstance(focused_widget, (tk.Entry, ttk.Entry, tk.Text)):
+            return
+
+        key = event.keysym.lower()
+
+        if key in {
+            "w", "s", "a", "d",
+            "left", "right", "up", "down",
+        }:
+            self.pressed_keys.add(key)
+            return "break"
+
+    def _on_key_release(self, event):
+        if not self.rc_active:
+            return
+
+        key = event.keysym.lower()
+        self.pressed_keys.discard(key)
+
+        # Return directional channels to their center positions.
+        if key in {"left", "right"}:
+            self.rc_values["roll"] = self.RC_CENTER
+
+        elif key in {"up", "down"}:
+            self.rc_values["pitch"] = self.RC_CENTER
+
+        elif key in {"a", "d"}:
+            self.rc_values["yaw"] = self.RC_CENTER
+
+        self._update_rc_display()
+
+        if key in {
+            "w", "s", "a", "d",
+            "left", "right", "up", "down",
+        }:
+            return "break"
+
+    def _schedule_rc_update(self):
+        if self.rc_active:
+            self.rc_update_job = self.root.after(
+                self.RC_UPDATE_INTERVAL,
+                self._update_rc_control,
+            )
+
+    def _update_rc_control(self):
+        if not self.rc_active:
+            return
+
+        step = self.RC_STEP
+
+        # Throttle: W increases, S decreases.
+        if "w" in self.pressed_keys and "s" not in self.pressed_keys:
+            self.rc_values["throttle"] += step
+
+        elif "s" in self.pressed_keys and "w" not in self.pressed_keys:
+            self.rc_values["throttle"] -= step
+
+        # Yaw: A turns left, D turns right.
+        if "a" in self.pressed_keys and "d" not in self.pressed_keys:
+            self.rc_values["yaw"] -= step
+
+        elif "d" in self.pressed_keys and "a" not in self.pressed_keys:
+            self.rc_values["yaw"] += step
+
+        # Roll: Left tilts left, Right tilts right.
+        if "left" in self.pressed_keys and "right" not in self.pressed_keys:
+            self.rc_values["roll"] -= step
+
+        elif "right" in self.pressed_keys and "left" not in self.pressed_keys:
+            self.rc_values["roll"] += step
+
+        # Pitch: Up moves forward, Down moves backward.
+        if "up" in self.pressed_keys and "down" not in self.pressed_keys:
+            self.rc_values["pitch"] -= step
+
+        elif "down" in self.pressed_keys and "up" not in self.pressed_keys:
+            self.rc_values["pitch"] += step
+
+        # Keep PWM values within the allowed range.
+        for channel in self.rc_values:
+            self.rc_values[channel] = max(
+                self.RC_MIN,
+                min(self.RC_MAX, self.rc_values[channel]),
+            )
+
+        try:
+            self.controller.update_rc_channels(
+                roll=self.rc_values["roll"],
+                pitch=self.rc_values["pitch"],
+                throttle=self.rc_values["throttle"],
+                yaw=self.rc_values["yaw"],
+            )
+
+        except Exception as exc:
+            self.log(f"RC update failed: {exc}")
+            self._stop_rc_control()
+            return
+
+        self._update_rc_display()
+        self._schedule_rc_update()
+
+    def _update_rc_display(self):
+        for channel, value in self.rc_values.items():
+            self.rc_vars[channel].set(value)
+            self.rc_value_labels[channel].configure(text=str(value))
+
     def disconnect(self):
+        if self.rc_active:
+            self._stop_rc_control()
+
         self.controller.disconnect()
 
         self.status_text.set("Disconnected")
@@ -424,9 +740,15 @@ class ArduPilotGUI:
                 "Armed" if state["armed"] else "Disarmed"
             )
 
+            if self.rc_active and state["mode"] != "STABILIZE":
+                self._stop_rc_control()
+
         self.root.after(500, self._update_vehicle_state)
 
     def close_application(self):
+        if self.rc_active:
+            self._stop_rc_control()
+
         self.controller.disconnect()
         self.root.destroy()
 

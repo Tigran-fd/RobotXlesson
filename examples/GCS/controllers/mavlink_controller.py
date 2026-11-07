@@ -40,6 +40,7 @@ class MAVLinkController:
         self._rc_lock = Lock()
         self._mav_send_lock = Lock()
         self.rc_control_enabled = False
+        self.drone_position = None
 
     def connect(self, connection_string, callback):
         if self.connecting or self.connected:
@@ -96,7 +97,6 @@ class MAVLinkController:
 
             try:
                 message = vehicle.recv_match(
-                    type="HEARTBEAT",
                     blocking=True,
                     timeout=1,
                 )
@@ -104,17 +104,36 @@ class MAVLinkController:
                 if message is None:
                     continue
 
-                if message.autopilot == mavutil.mavlink.MAV_AUTOPILOT_INVALID:
-                    continue
+                message_type = message.get_type()
 
-                mode = mavutil.mode_string_v10(message)
-                armed = bool(
-                    message.base_mode
-                    & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
-                )
+                if message_type == "HEARTBEAT":
+                    if message.autopilot == mavutil.mavlink.MAV_AUTOPILOT_INVALID:
+                        continue
 
-                self.current_mode = mode
-                self.is_armed = armed
+                    mode = mavutil.mode_string_v10(message)
+                    armed = bool(
+                        message.base_mode
+                        & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
+                    )
+
+                    with self._lock:
+                        self.current_mode = mode
+                        self.is_armed = armed
+
+                elif message_type == "GLOBAL_POSITION_INT":
+                    position = {
+                        "latitude": message.lat / 1e7,
+                        "longitude": message.lon / 1e7,
+                        "altitude": message.relative_alt / 1000.0,
+                        "heading": (
+                            message.hdg / 100.0
+                            if message.hdg != 65535
+                            else None
+                        ),
+                    }
+
+                    with self._lock:
+                        self.drone_position = position
 
             except Exception:
                 if not self._stop_event.is_set():
@@ -349,11 +368,19 @@ class MAVLinkController:
             "armed": getattr(self, "is_armed", False),
         }
 
+    def get_drone_position(self):
+        with self._lock:
+            if self.drone_position is None:
+                return None
+
+            return self.drone_position.copy()
+
     def disconnect(self):
         self.stop_rc_control()
         self._stop_event.set()
 
         with self._lock:
+            self.drone_position = None
             vehicle = self.vehicle
             self.vehicle = None
             self.connected = False

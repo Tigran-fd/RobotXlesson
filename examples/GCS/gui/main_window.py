@@ -3,7 +3,8 @@ from tkinter import ttk, messagebox
 from datetime import datetime
 
 from examples.GCS.controllers.mavlink_controller import MAVLinkController
-
+from examples.GCS.controllers.map_controller import MapController
+from examples.GCS.gui.map_window import MapWindow
 
 class ArduPilotGUI:
     RC_MIN = 1000
@@ -55,8 +56,12 @@ class ArduPilotGUI:
 
         self.root.protocol("WM_DELETE_WINDOW", self.close_application)
 
+        self.map_controller = MapController(self.controller)
+        self.map_window = None
+
         self.log("Application started.")
         self._update_vehicle_state()
+
 
     def _on_focus_out(self, event):
         if not self.rc_active:
@@ -145,6 +150,22 @@ class ArduPilotGUI:
             column=1,
             sticky="w",
             padx=10,
+        )
+        # Map section
+
+        self.map_button = ttk.Button(
+            connection_frame,
+            text="Open Drone Map",
+            command=self.open_map,
+            state="disabled",
+        )
+
+        self.map_button.grid(
+            row=3,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(5, 0),
         )
 
         # Vehicle information
@@ -429,6 +450,10 @@ class ArduPilotGUI:
             state="normal" if enabled and not self.rc_active else "disabled"
         )
 
+        self.map_button.configure(
+            state="normal" if enabled else "disabled"
+        )
+
     def connect(self):
         address = self.connection_string.get().strip()
 
@@ -700,6 +725,17 @@ class ArduPilotGUI:
             self.rc_vars[channel].set(value)
             self.rc_value_labels[channel].configure(text=str(value))
 
+    def open_map(self):
+        if self.map_window is not None:
+            if self.map_window.window.winfo_exists():
+                self.map_window.window.lift()
+                return
+
+        self.map_window = MapWindow(
+            self.root,
+            self.map_controller,
+        )
+
     def disconnect(self):
         if self.rc_active:
             self._stop_rc_control()
@@ -730,9 +766,3 @@ class ArduPilotGUI:
 
         self.controller.disconnect()
         self.root.destroy()
-
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = ArduPilotGUI(root)
-    root.mainloop()

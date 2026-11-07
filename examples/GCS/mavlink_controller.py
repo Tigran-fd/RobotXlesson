@@ -235,11 +235,6 @@ class MAVLinkController:
             if not self.connected or self.vehicle is None:
                 raise ConnectionError("Vehicle is not connected")
 
-            if self.current_mode != "STABILIZE":
-                raise RuntimeError(
-                    "RC control is available only in STABILIZE mode"
-                )
-
             if self.rc_control_enabled:
                 return
 
@@ -278,9 +273,6 @@ class MAVLinkController:
 
                 with self._lock:
                     if not self.connected or self.vehicle is None:
-                        break
-
-                    if self.current_mode != "STABILIZE":
                         break
 
                     vehicle = self.vehicle

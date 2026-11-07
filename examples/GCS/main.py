@@ -266,9 +266,9 @@ class ArduPilotGUI:
         rc_frame.pack(fill="x", pady=(0, 10))
 
         rc_channels = [
-            ("Roll", "roll"),
             ("Pitch", "pitch"),
             ("Throttle", "throttle"),
+            ("Roll", "roll"),
             ("Yaw", "yaw"),
         ]
 
@@ -558,14 +558,6 @@ class ArduPilotGUI:
                 "Vehicle is not connected."
             )
             return
-
-        if state["mode"] != "STABILIZE":
-            messagebox.showwarning(
-                "RC Control",
-                "RC control is available only in STABILIZE mode."
-            )
-            return
-
         try:
             self.controller.start_rc_control()
 
@@ -626,20 +618,10 @@ class ArduPilotGUI:
 
     def _on_key_release(self, event):
         if not self.rc_active:
-            return
+            return None
 
         key = event.keysym.lower()
         self.pressed_keys.discard(key)
-
-        # Return directional channels to their center positions.
-        if key in {"left", "right"}:
-            self.rc_values["roll"] = self.RC_CENTER
-
-        elif key in {"up", "down"}:
-            self.rc_values["pitch"] = self.RC_CENTER
-
-        elif key in {"a", "d"}:
-            self.rc_values["yaw"] = self.RC_CENTER
 
         self._update_rc_display()
 
@@ -739,9 +721,6 @@ class ArduPilotGUI:
             self.armed_text.set(
                 "Armed" if state["armed"] else "Disarmed"
             )
-
-            if self.rc_active and state["mode"] != "STABILIZE":
-                self._stop_rc_control()
 
         self.root.after(500, self._update_vehicle_state)
 

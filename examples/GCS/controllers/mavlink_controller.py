@@ -1,6 +1,7 @@
 from threading import Thread, Event, Lock, current_thread
 from pymavlink import mavutil
 import time
+import math
 
 class MAVLinkController:
     MODES = {
@@ -121,6 +122,15 @@ class MAVLinkController:
                         self.is_armed = armed
 
                 elif message_type == "GLOBAL_POSITION_INT":
+
+                    vx = message.vx / 100.0
+                    vy = message.vy / 100.0
+                    ground_speed = math.sqrt(vx ** 2 + vy ** 2)
+
+                    ground_track = None
+
+                    if ground_speed >= 0.5:
+                        ground_track = (math.degrees(math.atan2(vy, vx)) + 360) % 360
                     position = {
                         "latitude": message.lat / 1e7,
                         "longitude": message.lon / 1e7,
@@ -130,6 +140,9 @@ class MAVLinkController:
                             if message.hdg != 65535
                             else None
                         ),
+
+                        "ground_track": ground_track,
+
                     }
 
                     with self._lock:

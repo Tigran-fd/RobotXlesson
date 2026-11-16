@@ -3,17 +3,14 @@ from tkinter import ttk
 from tkintermapview import TkinterMapView
 
 
-class MapWindow:
+class MapWindow(ttk.Frame):
 
     UPDATE_INTERVAL = 500
 
     def __init__(self, parent, map_controller):
-        self.parent = parent
-        self.map_controller = map_controller
+        super().__init__(parent)
 
-        self.window = tk.Toplevel(parent)
-        self.window.title("Drone Map")
-        self.window.geometry("1100x750")
+        self.map_controller = map_controller
 
         self.drone_marker = None
         self.after_id = None
@@ -27,46 +24,40 @@ class MapWindow:
         self.follow_drone = tk.BooleanVar(value=True)
 
         self._build_ui()
-
-        self.window.protocol(
-            "WM_DELETE_WINDOW",
-            self.close,
-        )
-
         self._schedule_update()
 
     def _build_ui(self):
-        info_frame = ttk.Frame(self.window, padding=10)
+        info_frame = ttk.Frame(self, padding=10)
         info_frame.pack(fill="x")
 
         ttk.Label(
             info_frame,
             textvariable=self.latitude_text,
-        ).pack(side="left", padx=10)
+        ).pack(anchor="w", pady=2)
 
         ttk.Label(
             info_frame,
             textvariable=self.longitude_text,
-        ).pack(side="left", padx=10)
+        ).pack(anchor="w", pady=2)
 
         ttk.Label(
             info_frame,
             textvariable=self.altitude_text,
-        ).pack(side="left", padx=10)
+        ).pack(anchor="w", pady=2)
 
         ttk.Label(
             info_frame,
             textvariable=self.heading_text,
-        ).pack(side="left", padx=10)
+        ).pack(anchor="w", pady=2)
 
         ttk.Checkbutton(
             info_frame,
             text="Follow Drone",
             variable=self.follow_drone,
-        ).pack(side="right", padx=10)
+        ).pack(anchor="w", pady=5)
 
         self.map_widget = TkinterMapView(
-            self.window,
+            self,
             corner_radius=0,
         )
 
@@ -83,10 +74,11 @@ class MapWindow:
         self.map_widget.set_zoom(2)
 
     def _schedule_update(self):
-        self.after_id = self.window.after(
-            self.UPDATE_INTERVAL,
-            self._update_position,
-        )
+        if self.winfo_exists():
+            self.after_id = self.after(
+                self.UPDATE_INTERVAL,
+                self._update_position,
+            )
 
     def _update_position(self):
         position = self.map_controller.get_drone_position()
@@ -121,7 +113,6 @@ class MapWindow:
                     longitude,
                     text="Drone",
                 )
-
             else:
                 self.drone_marker.set_position(
                     latitude,
@@ -142,7 +133,7 @@ class MapWindow:
 
     def close(self):
         if self.after_id is not None:
-            self.window.after_cancel(self.after_id)
+            self.after_cancel(self.after_id)
             self.after_id = None
 
-        self.window.destroy()
+        self.destroy()

@@ -6,12 +6,13 @@ from examples.GCS.controllers.mavlink_controller import MAVLinkController
 from examples.GCS.controllers.map_controller import MapController
 from examples.GCS.gui.map_window import MapWindow
 
+
 class ArduPilotGUI:
     RC_MIN = 1000
     RC_MAX = 2000
     RC_CENTER = 1500
     RC_STEP = 10
-    RC_UPDATE_INTERVAL = 50  # milliseconds
+    RC_UPDATE_INTERVAL = 50
 
     def __init__(self, root):
         self.root = root
@@ -20,6 +21,7 @@ class ArduPilotGUI:
         self.root.resizable(False, False)
 
         self.controller = MAVLinkController()
+        self.map_controller = MapController(self.controller)
 
         self.connection_string = tk.StringVar(
             value="udpin:0.0.0.0:14551"
@@ -29,7 +31,6 @@ class ArduPilotGUI:
         self.armed_text = tk.StringVar(value="Disarmed")
         self.takeoff_altitude = tk.StringVar(value="10")
 
-        self.root.bind("<FocusOut>", self._on_focus_out)
         self.rc_active = False
         self.pressed_keys = set()
         self.rc_update_job = None
@@ -48,6 +49,8 @@ class ArduPilotGUI:
 
         self.rc_value_labels = {}
 
+        self.root.bind("<FocusOut>", self._on_focus_out)
+
         self._build_ui()
         self._set_controls_enabled(False)
 
@@ -56,32 +59,37 @@ class ArduPilotGUI:
 
         self.root.protocol("WM_DELETE_WINDOW", self.close_application)
 
-        self.map_controller = MapController(self.controller)
-        self.map_window = None
-
         self.log("Application started.")
         self._update_vehicle_state()
 
-
-    def _on_focus_out(self, event):
-        if not self.rc_active:
-            return
-
-        self.pressed_keys.clear()
-
-        self.rc_values["roll"] = self.RC_CENTER
-        self.rc_values["pitch"] = self.RC_CENTER
-        self.rc_values["yaw"] = self.RC_CENTER
-
-        self._update_rc_display()
-
     def _build_ui(self):
-        main_frame = ttk.Frame(self.root, padding=15)
+        main_frame = ttk.Frame(self.root, padding=10)
         main_frame.pack(fill="both", expand=True)
+
+        # Main layout
+        control_frame = ttk.Frame(main_frame, width=720)
+        control_frame.pack(
+            side="left",
+            fill="both",
+            expand=False,
+            padx=(0, 10),
+        )
+        control_frame.pack_propagate(False)
+
+        map_frame = ttk.LabelFrame(
+            main_frame,
+            text="Drone Map",
+            padding=5,
+        )
+        map_frame.pack(
+            side="right",
+            fill="both",
+            expand=True,
+        )
 
         # Connection section
         connection_frame = ttk.LabelFrame(
-            main_frame,
+            control_frame,
             text="Connection",
             padding=10,
         )
@@ -130,7 +138,7 @@ class ArduPilotGUI:
 
         # Connection status
         connection_status_frame = ttk.LabelFrame(
-            main_frame,
+            control_frame,
             text="Connection Status",
             padding=10,
         )
@@ -151,26 +159,10 @@ class ArduPilotGUI:
             sticky="w",
             padx=10,
         )
-        # Map section
-
-        self.map_button = ttk.Button(
-            connection_frame,
-            text="Open Drone Map",
-            command=self.open_map,
-            state="disabled",
-        )
-
-        self.map_button.grid(
-            row=3,
-            column=0,
-            columnspan=2,
-            sticky="ew",
-            pady=(5, 0),
-        )
 
         # Vehicle information
         vehicle_frame = ttk.LabelFrame(
-            main_frame,
+            control_frame,
             text="Vehicle Status",
             padding=10,
         )
@@ -198,7 +190,7 @@ class ArduPilotGUI:
 
         # Flight modes
         modes_frame = ttk.LabelFrame(
-            main_frame,
+            control_frame,
             text="Flight Modes",
             padding=10,
         )
@@ -236,7 +228,7 @@ class ArduPilotGUI:
 
         # Vehicle control
         arm_frame = ttk.LabelFrame(
-            main_frame,
+            control_frame,
             text="Vehicle Control",
             padding=10,
         )
@@ -251,7 +243,7 @@ class ArduPilotGUI:
 
         # Takeoff control
         takeoff_frame = ttk.LabelFrame(
-            main_frame,
+            control_frame,
             text="Takeoff",
             padding=10,
         )
@@ -280,7 +272,7 @@ class ArduPilotGUI:
 
         # RC Control
         rc_frame = ttk.LabelFrame(
-            main_frame,
+            control_frame,
             text="RC Control",
             padding=10,
         )
@@ -334,11 +326,7 @@ class ArduPilotGUI:
                 text=str(self.rc_values[channel]),
                 width=6,
             )
-            value_label.grid(
-                row=row,
-                column=column + 2,
-                padx=5,
-            )
+            value_label.grid(row=row, column=column + 2, padx=5)
 
             self.rc_value_labels[channel] = value_label
 
@@ -372,7 +360,7 @@ class ArduPilotGUI:
 
         # Activity logs
         logs_frame = ttk.LabelFrame(
-            main_frame,
+            control_frame,
             text="Activity Logs",
             padding=10,
         )
@@ -401,11 +389,21 @@ class ArduPilotGUI:
         self.logs_text.configure(yscrollcommand=scrollbar.set)
 
         self.clear_logs_button = ttk.Button(
-            main_frame,
+            control_frame,
             text="Clear Logs",
             command=self.clear_logs,
         )
         self.clear_logs_button.pack(anchor="e", pady=(5, 0))
+
+        # Embedded drone map
+        self.map_window = MapWindow(
+            map_frame,
+            self.map_controller,
+        )
+        self.map_window.pack(
+            fill="both",
+            expand=True,
+        )
 
     def log(self, message):
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -448,10 +446,6 @@ class ArduPilotGUI:
 
         self.rc_button.configure(
             state="normal" if enabled and not self.rc_active else "disabled"
-        )
-
-        self.map_button.configure(
-            state="normal" if enabled else "disabled"
         )
 
     def connect(self):
@@ -497,10 +491,7 @@ class ArduPilotGUI:
             mode,
             lambda success, message: self.root.after(
                 0,
-                lambda: self._handle_command_result(
-                    success,
-                    message,
-                ),
+                lambda: self._handle_command_result(success, message),
             ),
         )
 
@@ -583,6 +574,7 @@ class ArduPilotGUI:
                 "Vehicle is not connected."
             )
             return
+
         try:
             self.controller.start_rc_control()
 
@@ -622,11 +614,22 @@ class ArduPilotGUI:
 
         self.log("RC Control disabled.")
 
+    def _on_focus_out(self, event):
+        if not self.rc_active:
+            return
+
+        self.pressed_keys.clear()
+
+        self.rc_values["roll"] = self.RC_CENTER
+        self.rc_values["pitch"] = self.RC_CENTER
+        self.rc_values["yaw"] = self.RC_CENTER
+
+        self._update_rc_display()
+
     def _on_key_press(self, event):
         if not self.rc_active:
             return
 
-        # Do not capture keys when the user is typing in an input field.
         focused_widget = self.root.focus_get()
 
         if isinstance(focused_widget, (tk.Entry, ttk.Entry, tk.Text)):
@@ -669,35 +672,30 @@ class ArduPilotGUI:
 
         step = self.RC_STEP
 
-        # Throttle: W increases, S decreases.
         if "w" in self.pressed_keys and "s" not in self.pressed_keys:
             self.rc_values["throttle"] += step
 
         elif "s" in self.pressed_keys and "w" not in self.pressed_keys:
             self.rc_values["throttle"] -= step
 
-        # Yaw: A turns left, D turns right.
         if "a" in self.pressed_keys and "d" not in self.pressed_keys:
             self.rc_values["yaw"] -= step
 
         elif "d" in self.pressed_keys and "a" not in self.pressed_keys:
             self.rc_values["yaw"] += step
 
-        # Roll: Left tilts left, Right tilts right.
         if "left" in self.pressed_keys and "right" not in self.pressed_keys:
             self.rc_values["roll"] -= step
 
         elif "right" in self.pressed_keys and "left" not in self.pressed_keys:
             self.rc_values["roll"] += step
 
-        # Pitch: Up moves forward, Down moves backward.
         if "up" in self.pressed_keys and "down" not in self.pressed_keys:
             self.rc_values["pitch"] -= step
 
         elif "down" in self.pressed_keys and "up" not in self.pressed_keys:
             self.rc_values["pitch"] += step
 
-        # Keep PWM values within the allowed range.
         for channel in self.rc_values:
             self.rc_values[channel] = max(
                 self.RC_MIN,
@@ -724,17 +722,6 @@ class ArduPilotGUI:
         for channel, value in self.rc_values.items():
             self.rc_vars[channel].set(value)
             self.rc_value_labels[channel].configure(text=str(value))
-
-    def open_map(self):
-        if self.map_window is not None:
-            if self.map_window.window.winfo_exists():
-                self.map_window.window.lift()
-                return
-
-        self.map_window = MapWindow(
-            self.root,
-            self.map_controller,
-        )
 
     def disconnect(self):
         if self.rc_active:
@@ -764,5 +751,6 @@ class ArduPilotGUI:
         if self.rc_active:
             self._stop_rc_control()
 
+        self.map_window.close()
         self.controller.disconnect()
         self.root.destroy()
